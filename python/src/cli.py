@@ -164,6 +164,7 @@ def download_from_hf(model_id, weights_dir, precision):
 def cmd_download(args):
     """Download model weights. By default downloads pre-converted weights from Cactus-Compute."""
     model_id = args.model_id
+    is_local = Path(model_id).is_dir()
     weights_dir = get_weights_dir(model_id)
     reconvert = getattr(args, 'reconvert', False)
     precision = getattr(args, 'precision', 'INT4')
@@ -181,7 +182,7 @@ def cmd_download(args):
     print_color(YELLOW, f"Model weights not found. Downloading {model_id}...")
     print("=" * 45)
 
-    if not reconvert:
+    if not reconvert and not is_local:
         if download_from_hf(model_id, weights_dir, precision):
             ensure_vad_weights(model_id, weights_dir, precision)
             return 0
@@ -217,14 +218,17 @@ def cmd_download(args):
     transformers.logging.set_verbosity_error()
 
     def _download_config_json(repo_id, revision=None):
-        from huggingface_hub import hf_hub_download
-        config_path = hf_hub_download(
-            repo_id=repo_id,
-            filename="config.json",
-            cache_dir=cache_dir,
-            token=token,
-            revision=revision,
-        )
+        if Path(repo_id).is_dir():
+            config_path = Path(repo_id) / "config.json"
+        else:
+            from huggingface_hub import hf_hub_download
+            config_path = hf_hub_download(
+                repo_id=repo_id,
+                filename="config.json",
+                cache_dir=cache_dir,
+                token=token,
+                revision=revision,
+            )
         with open(config_path, 'r', encoding='utf-8') as fh:
             return json.load(fh)
 
@@ -261,15 +265,18 @@ def cmd_download(args):
                 self.eos_token_id = self.pad_token_id
 
     def _load_raw_hf_state_dict(repo_id):
-        from huggingface_hub import snapshot_download
         from safetensors.torch import load_file as load_safetensors_file
 
-        snapshot_path = Path(snapshot_download(
-            repo_id=repo_id,
-            cache_dir=cache_dir,
-            token=token,
-            allow_patterns=["*.safetensors", "*.safetensors.index.json", "*.bin", "*.bin.index.json"],
-        ))
+        if Path(repo_id).is_dir():
+            snapshot_path = Path(repo_id)
+        else:
+            from huggingface_hub import snapshot_download
+            snapshot_path = Path(snapshot_download(
+                repo_id=repo_id,
+                cache_dir=cache_dir,
+                token=token,
+                allow_patterns=["*.safetensors", "*.safetensors.index.json", "*.bin", "*.bin.index.json"],
+            ))
 
         index_candidates = [
             "model.safetensors.index.json",
