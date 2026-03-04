@@ -164,6 +164,7 @@ def download_from_hf(model_id, weights_dir, precision):
 def cmd_download(args):
     """Download model weights. By default downloads pre-converted weights from Cactus-Compute."""
     model_id = args.model_id
+    model_name = getattr(args, 'original_model_id', model_id)
     is_local = Path(model_id).is_dir()
     weights_dir = get_weights_dir(model_id)
     reconvert = getattr(args, 'reconvert', False)
@@ -319,10 +320,10 @@ def cmd_download(args):
     except ImportError:
         Lfm2VlForConditionalGeneration = None
 
-    is_vlm = 'vl' in model_id.lower() or 'vlm' in model_id.lower()
-    is_whisper = 'whisper' in model_id.lower()
-    is_parakeet = 'parakeet' in model_id.lower()
-    is_vad = 'silero-vad' in model_id.lower()
+    is_vlm = 'vl' in model_name.lower() or 'vlm' in model_name.lower()
+    is_whisper = 'whisper' in model_name.lower()
+    is_parakeet = 'parakeet' in model_name.lower()
+    is_vad = 'silero-vad' in model_name.lower()
 
     try:
         if is_vlm:
@@ -527,12 +528,12 @@ def cmd_download(args):
 
         config = convert_hf_model_weights(model, weights_dir, precision, args)
 
-        model_name_l = model_id.lower()
-        if 'extract' in model_name_l:
+        model_name_lower = model_name.lower()
+        if 'extract' in model_name_lower:
             config['model_variant'] = 'extract'
-        elif 'vlm' in model_name_l:
+        elif 'vlm' in model_name_lower:
             config['model_variant'] = 'vlm'
-        elif 'rag' in model_name_l:
+        elif 'rag' in model_name_lower:
             config['model_variant'] = 'rag'
         else:
             config.setdefault('model_variant', 'default')
@@ -552,7 +553,7 @@ def cmd_download(args):
             tokenizer,
             weights_dir,
             token=token,
-            model_id=model_id,
+            model_id=model_name,
             labels=tokenizer_labels,
         )
 
@@ -1602,6 +1603,16 @@ def cmd_convert(args):
         merged_model.save_pretrained(temp_merged_dir)
         tokenizer.save_pretrained(temp_merged_dir)
 
+        # Copy SentencePiece .model file: prefer LoRA adapter's, fall back to base model's
+        lora_sp = next(Path(lora_path).glob("*.model"), None)
+        if lora_sp:
+            shutil.copy2(lora_sp, Path(temp_merged_dir) / lora_sp.name)
+        else:
+            from .tokenizer import _find_sentencepiece_model
+            base_sp = _find_sentencepiece_model(args.model_name, token=token)
+            if base_sp:
+                shutil.copy2(base_sp, Path(temp_merged_dir) / Path(base_sp).name)
+
         del merged_model
         import torch
         if torch.cuda.is_available():
@@ -1614,6 +1625,7 @@ def cmd_convert(args):
 
     download_args = DownloadArgs()
     download_args.model_id = model_id
+    download_args.original_model_id = args.model_name
     download_args.precision = args.precision
     download_args.cache_dir = cache_dir
     download_args.token = token
