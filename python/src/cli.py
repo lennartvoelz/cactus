@@ -1603,7 +1603,8 @@ def cmd_convert(args):
         merged_model.save_pretrained(temp_merged_dir)
         tokenizer.save_pretrained(temp_merged_dir)
 
-        # Copy SentencePiece .model file: prefer LoRA adapter's, fall back to base model's
+        # Copy SentencePiece .model file and tokenizer_config.json if they exist
+        # in the LoRA adapter directory
         lora_sp = next(Path(lora_path).glob("*.model"), None)
         if lora_sp:
             shutil.copy2(lora_sp, Path(temp_merged_dir) / lora_sp.name)
@@ -1612,6 +1613,10 @@ def cmd_convert(args):
             base_sp = _find_sentencepiece_model(args.model_name, token=token)
             if base_sp:
                 shutil.copy2(base_sp, Path(temp_merged_dir) / Path(base_sp).name)
+
+        lora_tok_config = Path(lora_path) / "tokenizer_config.json"
+        if lora_tok_config.exists():
+            shutil.copy2(lora_tok_config, Path(temp_merged_dir) / "tokenizer_config.json")
 
         del merged_model
         import torch
