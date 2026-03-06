@@ -331,10 +331,8 @@ std::string Tokenizer::format_gemma_style(const std::vector<ChatMessage>& messag
             }
         }
         if (!tools_json.empty()) {
-            result += "You are a model that can do function calling with the following functions.";
+            result += "You are a model that can do function calling with the following functions";
             result += tools_json;
-            result += "\n\nWhen you decide to call a function, output it in this exact format:\n";
-            result += "<start_function_call>call:function_name{arg1:<escape>value1<escape>,arg2:<escape>value2<escape>}<end_function_call>";
         }
         result += "<end_of_turn>\n";
     }
@@ -345,24 +343,35 @@ std::string Tokenizer::format_gemma_style(const std::vector<ChatMessage>& messag
         const auto& msg = messages[i];
 
         if (msg.role == "tool") {
-            std::string func_name = msg.name.empty() ? "tool" : msg.name;
-            result += "<start_function_response>response:" + func_name + "{value:<escape>" + msg.content + "<escape>}<end_function_response>";
-            prev_message_type = "tool_response";
-        } else if (msg.role == "user") {
             if (prev_message_type != "tool_response") {
-                result += "<start_of_turn>user\n";
+                result += "<start_of_turn>developer\n";
             }
+            std::string func_name = msg.name.empty() ? "tool" : msg.name;
+            result += "<start_function_response>response:" + func_name + "{" + msg.content + "}<end_function_response>";
+            prev_message_type = "tool_response";
+            
+        } else if (msg.role == "user") {
+            if (prev_message_type == "tool_response") {
+                result += "<end_of_turn>\n";
+            }
+            result += "<start_of_turn>user\n";
             result += msg.content;
             result += "<end_of_turn>\n";
             prev_message_type = "content";
+            
         } else if (msg.role == "assistant" || msg.role == "model") {
-            if (prev_message_type != "tool_response") {
-                result += "<start_of_turn>model\n";
+            if (prev_message_type == "tool_response") {
+                result += "<end_of_turn>\n";
             }
+            result += "<start_of_turn>model\n";
             result += msg.content;
             result += "<end_of_turn>\n";
             prev_message_type = "content";
         }
+    }
+
+    if (prev_message_type == "tool_response") {
+        result += "<end_of_turn>\n";
     }
 
     if (add_generation_prompt) {
