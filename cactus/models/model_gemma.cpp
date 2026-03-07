@@ -215,10 +215,8 @@ uint32_t GemmaModel::decode(const std::vector<uint32_t>& tokens, float temperatu
     size_t hidden_dim = last_hidden_buf.shape[0];
     last_hidden = gb->reshape(last_hidden, {1, hidden_dim});
 
-    // FP16 matmul for logits, then cast to FP32 for sampling
-    auto logits_fp16 = gb->matmul(last_hidden, output_weight_node_id_, true, backend);
-    auto logits_node_id = gb->precision_cast(logits_fp16, Precision::FP32);
-    auto sampled_token_id = gb->sample(logits_node_id, temperature, top_p, top_k, tool_constrainer_.get_bias());
+    auto logits_node_id = gb->matmul(last_hidden, output_weight_node_id_, true, backend);
+    auto sampled_token_id = gb->sample(logits_node_id, temperature, top_p, top_k, tool_constrainer_.get_bias(), true);
 
     gb->execute(profile_file);
 

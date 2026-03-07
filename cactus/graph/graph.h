@@ -341,6 +341,8 @@ struct OpParams {
     bool moe_gated = true; 
     Activation activation = Activation::SILU;
 
+    bool fp32_accumulate = false;
+
     std::vector<float> bias_values;
     std::vector<uint32_t> bias_indices;
 
@@ -555,7 +557,8 @@ public:
     size_t stft(size_t input, size_t weight, size_t stride, size_t num_fft_bins);
 
     size_t sample(size_t logits, float temperature = 0.6f, float top_p = 0.95f, size_t top_k = 20,
-                  const std::unordered_map<uint32_t, float>& logit_bias = {});
+                  const std::unordered_map<uint32_t, float>& logit_bias = {},
+                  bool fp32_accumulate = false);
     
     size_t concat(size_t input1, size_t input2, int axis = 0);
     size_t scatter_topk(size_t indices, size_t values, size_t num_classes);
