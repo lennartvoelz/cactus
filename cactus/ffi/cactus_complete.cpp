@@ -78,7 +78,6 @@ std::vector<std::vector<uint32_t>> build_stop_sequences(
     }
 
     if (model_type == Config::ModelType::GEMMA && has_tools) {
-        stop_token_sequences.push_back(tokenizer->encode("<end_function_call>"));
         stop_token_sequences.push_back(tokenizer->encode("<start_function_response>"));
     }
 
