@@ -138,7 +138,10 @@ enum class OpType {
     LSTM_CELL,
     GATED_DELTANET_DECODE,
     GATED_DELTANET_PREFILL,
-    STFT
+    STFT,
+    ALTUP_PREDICT,
+    ALTUP_CORRECT,
+    GAUSSIAN_TOPK
 };
 
 struct PrecisionTraits {
@@ -355,6 +358,7 @@ struct OpParams {
     size_t head_dim = 0;
     size_t num_fft_bins = 0;
     size_t chunk_size = 0;
+    size_t num_altup_inputs = 0;
 };
 
 struct GraphNode {
@@ -390,6 +394,8 @@ void compute_index_node(GraphNode& node, const std::vector<std::unique_ptr<Graph
 void compute_lstm_cell_node(GraphNode& node, const std::vector<std::unique_ptr<GraphNode>>& nodes, const std::unordered_map<size_t, size_t>& node_index_map);
 void compute_gated_deltanet_decode_node(GraphNode& node, const std::vector<std::unique_ptr<GraphNode>>& nodes, const std::unordered_map<size_t, size_t>& node_index_map);
 void compute_gated_deltanet_prefill_node(GraphNode& node, const std::vector<std::unique_ptr<GraphNode>>& nodes, const std::unordered_map<size_t, size_t>& node_index_map);
+void compute_altup_predict_node(GraphNode& node, const std::vector<std::unique_ptr<GraphNode>>& nodes, const std::unordered_map<size_t, size_t>& node_index_map);
+void compute_altup_correct_node(GraphNode& node, const std::vector<std::unique_ptr<GraphNode>>& nodes, const std::unordered_map<size_t, size_t>& node_index_map);
 
 void shrink_thread_local_buffers();
 class BufferPool {
@@ -555,6 +561,11 @@ public:
     size_t gated_deltanet_prefill(size_t query, size_t key, size_t value, size_t gate_log, size_t beta,
                                   size_t initial_state, size_t chunk_size = 64, float scale = 0.0f);
     size_t stft(size_t input, size_t weight, size_t stride, size_t num_fft_bins);
+
+    size_t altup_predict(size_t coefs, const size_t* streams, size_t num_streams);
+    size_t altup_correct(size_t coefs, size_t innovation, const size_t* predictions, size_t num_predictions);
+
+    size_t gaussian_topk(size_t input, float ppf);
 
     size_t sample(size_t logits, float temperature = 0.6f, float top_p = 0.95f, size_t top_k = 20,
                   const std::unordered_map<uint32_t, float>& logit_bias = {},
