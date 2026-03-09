@@ -122,7 +122,9 @@ bool Model::init_internal(CactusGraph* gb, const std::string& model_folder, size
 
     load_weights_to_graph(gb);
 
-    if (config_.model_type == Config::ModelType::GEMMA) {
+    if (config_.model_type == Config::ModelType::GEMMA3N) {
+        attention_scale_ = 1.0f;
+    } else if (config_.model_type == Config::ModelType::GEMMA) {
         attention_scale_ = 1.0f / std::sqrt(256.0f);
     } else {
         attention_scale_ = 1.0f / std::sqrt(static_cast<float>(config_.attention_head_dim));
@@ -244,7 +246,14 @@ uint32_t Model::decode(const std::vector<uint32_t>& tokens, float temperature, f
     last_hidden = gb->reshape(last_hidden, {1, hidden_dim});
 
     auto logits_node_id = gb->matmul(last_hidden, output_weight_node_id_, true, backend);
-    auto sampled_token_id = gb->sample(logits_node_id, temperature, top_p, top_k, tool_constrainer_.get_bias());
+
+    if (config_.final_logit_softcapping > 0.0f) {
+        float inv_cap = 1.0f / config_.final_logit_softcapping;
+        logits_node_id = gb->scalar_multiply(logits_node_id, inv_cap);
+        logits_node_id = gb->tanh(logits_node_id);
+        logits_node_id = gb->scalar_multiply(logits_node_id, config_.final_logit_softcapping);
+    }
+    auto sampled_token_id = sample_token(gb, logits_node_id, temperature, top_p, top_k);
 
     gb->execute(profile_file);
 
@@ -295,6 +304,20 @@ uint32_t Model::decode(const std::vector<uint32_t>& tokens, float temperature, f
 
     auto* output_ptr = gb->get_output(sampled_token_id);
     return *static_cast<uint32_t*>(output_ptr);
+}
+
+size_t Model::sample_token(CactusGraph* gb, size_t logits_node_id, float temperature, float top_p, size_t top_k,
+                           const std::unordered_map<uint32_t, float>* extra_bias) const {
+    auto combined_bias = tool_constrainer_.get_bias();
+    for (const auto& [token_id, boost] : vocab_bias_) {
+        combined_bias[token_id] += boost;
+    }
+    if (extra_bias) {
+        for (const auto& [token_id, boost] : *extra_bias) {
+            combined_bias[token_id] += boost;
+        }
+    }
+    return gb->sample(logits_node_id, temperature, top_p, top_k, combined_bias);
 }
 
 uint32_t Model::decode_with_audio(const std::vector<uint32_t>& tokens, const std::vector<float>& /*mel_bins*/, float temperature, float top_p, size_t top_k, const std::string& profile_file, float* out_entropy){
@@ -489,6 +512,7 @@ bool Config::from_json(const std::string& config_path) {
             else if (value == "parakeet" || value == "PARAKEET") model_type = ModelType::PARAKEET;
             else if (model_type_value.rfind("qwen3_5", 0) == 0) model_type = ModelType::QWEN3P5;
             else if (value == "parakeet_tdt" || value == "PARAKEET_TDT") model_type = ModelType::PARAKEET_TDT;
+            else if (value == "gemma3n" || value == "GEMMA3N") model_type = ModelType::GEMMA3N;
             else model_type = ModelType::QWEN;
         }
         else if (key == "model_variant") {
@@ -557,9 +581,28 @@ bool Config::from_json(const std::string& config_path) {
                 tdt_durations.push_back(static_cast<uint32_t>(std::stoul(item)));
             }
         }
+        else if (key == "altup_num_inputs") altup_num_inputs = static_cast<uint32_t>(std::stoul(value));
+        else if (key == "laurel_rank") laurel_rank = static_cast<uint32_t>(std::stoul(value));
+        else if (key == "hidden_size_per_layer_input") hidden_size_per_layer_input = static_cast<uint32_t>(std::stoul(value));
+        else if (key == "num_kv_shared_layers") num_kv_shared_layers = static_cast<uint32_t>(std::stoul(value));
+        else if (key == "sliding_window") sliding_window = static_cast<uint32_t>(std::stoul(value));
+        else if (key == "rope_local_base_freq") rope_local_base_freq = std::stof(value);
+        else if (key == "final_logit_softcapping") final_logit_softcapping = std::stof(value);
+        else if (key == "activation_sparsity_ppf") {
+            activation_sparsity_ppf.clear();
+            std::stringstream ss(value);
+            std::string item;
+            while (std::getline(ss, item, ',')) {
+                size_t first = item.find_first_not_of(" \t");
+                if (first == std::string::npos) continue;
+                size_t last = item.find_last_not_of(" \t");
+                item = item.substr(first, last - first + 1);
+                activation_sparsity_ppf.push_back(std::stof(item));
+            }
+        }
     }
 
-    if (model_type == ModelType::GEMMA) {
+    if (model_type == ModelType::GEMMA || model_type == ModelType::GEMMA3N) {
         default_temperature = 1.0f;
         default_top_p = 0.95f;
         default_top_k = 64;
@@ -635,6 +678,8 @@ std::unique_ptr<Model> create_model(const std::string& model_folder) {
             return std::make_unique<Qwen3p5Model>(config);
         case Config::ModelType::GEMMA:
             return std::make_unique<GemmaModel>(config);
+        case Config::ModelType::GEMMA3N:
+            return std::make_unique<GemmaModel3n>(config);
         case Config::ModelType::LFM2:
             if (config.num_experts > 0 && config.moe_intermediate_dim > 0 && config.num_experts_per_tok > 0) {
                 return std::make_unique<LFM2MoEModel>(config);
@@ -777,7 +822,7 @@ void Model::prefill_npu(const std::vector<uint32_t>& tokens) {
         throw std::runtime_error("Failed to get token embeddings for NPU prefill");
     }
 
-    if (config_.model_type == Config::ModelType::GEMMA) {
+    if (config_.model_type == Config::ModelType::GEMMA || config_.model_type == Config::ModelType::GEMMA3N) {
         float scale = std::sqrt(static_cast<float>(hidden_dim));
         for (size_t i = 0; i < all_embeddings.size(); i++) {
             all_embeddings[i] = __fp16(static_cast<float>(all_embeddings[i]) * scale);

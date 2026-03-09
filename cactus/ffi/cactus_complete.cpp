@@ -232,7 +232,7 @@ int cactus_complete(
 
         Config::ModelType model_type = handle->model->get_config().model_type;
         std::string formatted_tools;
-        if (model_type == Config::ModelType::GEMMA) {
+        if (model_type == Config::ModelType::GEMMA || model_type == Config::ModelType::GEMMA3N) {
             formatted_tools = gemma::format_tools(tools);
         } else {
             formatted_tools = serialize_tools_json(tools);

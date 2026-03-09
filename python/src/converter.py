@@ -8,10 +8,11 @@ except ImportError:
     torch = None
 
 from .tensor_io import save_tensor_with_header, create_quantization_stats, print_quantization_summary
-from .config_utils import cfg_get, detect_model_type, extract_base_config, extract_vision_config, extract_lfm2_config, is_vlm_model, extract_moonshine_config
+from .config_utils import cfg_get, detect_model_type, extract_base_config, extract_vision_config, extract_lfm2_config, is_vlm_model, extract_moonshine_config, extract_gemma3n_config
 from .weight_patterns import (
     EMBED_NAMES, OUTPUT_NAMES, OUTPUT_NORM_NAMES, LAYER_PREFIXES,
     VISION_ITEMS, PROJECTOR_WEIGHTS, WHISPER_GLOBAL_WEIGHTS, MOONSHINE_GLOBAL_WEIGHTS,
+    GEMMA3N_GLOBAL_WEIGHTS, GEMMA3N_VISION_TOWER_PREFIX, GEMMA3N_AUDIO_TOWER_PREFIX,
     get_layer_weight_patterns, get_vision_layer_weights
 )
 
@@ -21,6 +22,20 @@ def _find_first_key(state_dict, candidates):
         if key in state_dict:
             return key
     return None
+
+
+def _gemma3n_tower_output_name(hf_key, strip_prefix, add_prefix):
+    name = hf_key[len(strip_prefix):]
+    if name.endswith('.weight'):
+        name = name[:-len('.weight')]
+        ext = '.weights'
+    elif name.endswith('.bias'):
+        name = name[:-len('.bias')]
+        ext = '.bias'
+    else:
+        ext = '.weights'
+    name = name.replace('.', '_')
+    return add_prefix + name + ext
 
 
 def convert_hf_model_weights(model, output_dir, precision='INT8', args=None):
@@ -54,7 +69,9 @@ def convert_hf_model_weights(model, output_dir, precision='INT8', args=None):
     if is_vlm and vision_config is not None:
         model_config.update(extract_vision_config(root_config, vision_config))
 
-    if detected_model_type == 'lfm2':
+    if detected_model_type == 'gemma3n':
+        model_config.update(extract_gemma3n_config(config, root_config))
+    elif detected_model_type == 'lfm2':
         model_config.update(extract_lfm2_config(config))
     elif detected_model_type == 'moonshine':
         model_config.update(extract_moonshine_config(config))
@@ -216,14 +233,6 @@ def convert_hf_model_weights(model, output_dir, precision='INT8', args=None):
                 saved_tensor_full_names.add(name)
 
     if tie_word_embeddings:
-        src = output_dir / "token_embeddings.weights"
-        dst = output_dir / "output_weight.weights"
-        if src.exists():
-            if dst.exists():
-                dst.unlink()
-            os.link(src, dst)
-        else:
-            print(f"Warning: tie_word_embeddings is True but {src} not found")
         if embedding_found:
             for name in OUTPUT_NAMES:
                 if name in state_dict:
@@ -324,6 +333,33 @@ def convert_hf_model_weights(model, output_dir, precision='INT8', args=None):
                 if fname in state_dict:
                     save_tensor_with_header(state_dict[fname], output_dir / out, precision, stats_tracker=quantization_stats, args=args, model_type=detected_model_type)
                     saved_tensor_full_names.add(fname)
+
+    if detected_model_type == 'gemma3n':
+        pli_key = 'model.language_model.embed_tokens_per_layer.weight'
+        if pli_key in state_dict:
+            pli_tensor = state_dict[pli_key]
+            main_vocab = int(model_config.get('vocab_size', pli_tensor.shape[0]))
+            if pli_tensor.shape[0] < main_vocab:
+                pad_rows = main_vocab - pli_tensor.shape[0]
+                state_dict[pli_key] = torch.cat([pli_tensor, pli_tensor[0:1].expand(pad_rows, -1)], dim=0)
+
+        for name, save_name in GEMMA3N_GLOBAL_WEIGHTS:
+            if name in state_dict:
+                save_tensor_with_header(state_dict[name], output_dir / save_name, precision, transpose=False, stats_tracker=quantization_stats, args=args, model_type=detected_model_type)
+                saved_tensor_full_names.add(name)
+
+        for hf_key in sorted(state_dict.keys()):
+            if hf_key.startswith(GEMMA3N_VISION_TOWER_PREFIX) and hf_key not in saved_tensor_full_names:
+                out_name = _gemma3n_tower_output_name(hf_key, GEMMA3N_VISION_TOWER_PREFIX, 'vision_')
+                save_tensor_with_header(state_dict[hf_key], output_dir / out_name, precision, transpose=False, stats_tracker=quantization_stats, args=args, model_type=detected_model_type)
+                saved_tensor_full_names.add(hf_key)
+
+        for hf_key in sorted(state_dict.keys()):
+            if hf_key.startswith(GEMMA3N_AUDIO_TOWER_PREFIX) and hf_key not in saved_tensor_full_names:
+                out_name = _gemma3n_tower_output_name(hf_key, GEMMA3N_AUDIO_TOWER_PREFIX, 'audio_')
+                save_tensor_with_header(state_dict[hf_key], output_dir / out_name, precision, transpose=False, stats_tracker=quantization_stats, args=args, model_type=detected_model_type)
+                saved_tensor_full_names.add(hf_key)
+
     missing_tensors = []
     if detected_model_type == 'parakeet':
         global_mappings = [
@@ -698,7 +734,9 @@ def convert_hf_model_weights(model, output_dir, precision='INT8', args=None):
                 missing_tensors.append((i, "<no-layer-prefix>", ["<no-matching-prefix>"]))
                 continue
 
-            weight_patterns = get_layer_weight_patterns(i, precision, model_type_str)
+            num_kv_shared = int(model_config.get('num_kv_shared_layers', 0))
+            first_shared = num_layers - num_kv_shared if num_layers > num_kv_shared else num_layers
+            weight_patterns = get_layer_weight_patterns(i, precision, model_type_str, skip_kv=(i >= first_shared))
 
             for layer_prefix in existing_prefixes:
                 for name_patterns, tensor_precision, output_name, should_transpose in weight_patterns:

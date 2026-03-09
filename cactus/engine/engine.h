@@ -115,7 +115,7 @@ struct Config {
     uint32_t linear_k_proj_dim = 0;
     uint32_t linear_v_proj_dim = 0;
 
-    enum class ModelType {QWEN = 0, GEMMA = 1, NOMIC = 3, LFM2 = 5, SIGLIP2 = 6, WHISPER = 7, MOONSHINE = 8, SILERO_VAD = 9, PARAKEET = 10, QWEN3P5 = 11, PARAKEET_TDT = 12};
+    enum class ModelType {QWEN = 0, GEMMA = 1, NOMIC = 3, LFM2 = 5, SIGLIP2 = 6, WHISPER = 7, MOONSHINE = 8, SILERO_VAD = 9, PARAKEET = 10, QWEN3P5 = 11, PARAKEET_TDT = 12, GEMMA3N = 13};
     uint32_t predictor_hidden_dim = 0;
     uint32_t predictor_num_layers = 0;
     uint32_t tdt_joint_dim = 0;
@@ -145,6 +145,15 @@ struct Config {
 
     std::vector<std::string> layer_types;
     size_t conv_L_cache = 0;
+
+    uint32_t altup_num_inputs = 4;
+    uint32_t laurel_rank = 64;
+    uint32_t hidden_size_per_layer_input = 256;
+    uint32_t num_kv_shared_layers = 0;
+    uint32_t sliding_window = 512;
+    float rope_local_base_freq = 10000.0f;
+    float final_logit_softcapping = 0.0f;
+    std::vector<float> activation_sparsity_ppf;
 
     bool from_json(const std::string& json_path);
     std::string to_json() const;
@@ -563,7 +572,22 @@ public:
 
     void* graph_handle_;
 
+    void set_vocab_bias(const std::unordered_map<uint32_t, float>& bias) {
+        vocab_bias_ = bias;
+    }
+
+    void clear_vocab_bias() {
+        vocab_bias_.clear();
+    }
+
+    bool has_vocab_bias() const {
+        return !vocab_bias_.empty();
+    }
+
 protected:
+    size_t sample_token(CactusGraph* gb, size_t logits_node_id, float temperature, float top_p, size_t top_k,
+                        const std::unordered_map<uint32_t, float>* extra_bias = nullptr) const;
+
     virtual size_t forward(const std::vector<uint32_t>& tokens, bool use_cache = false) = 0;
     
     virtual size_t forward(const std::vector<float>& audio_features, const std::vector<uint32_t>& tokens, bool use_cache = false);
@@ -610,6 +634,9 @@ protected:
     virtual std::vector<__fp16> get_token_embeddings(const std::vector<uint32_t>& tokens);
 
     ToolCallConstrainer tool_constrainer_;
+
+private:
+    std::unordered_map<uint32_t, float> vocab_bias_;
 };
 
 std::unique_ptr<Model> create_model(const std::string& model_folder);

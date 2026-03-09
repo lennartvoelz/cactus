@@ -364,6 +364,30 @@ inline size_t kv_scales_count(size_t seq_len, size_t kv_heads, size_t head_dim, 
 
 void cactus_unpack_int4_to_int8(const uint8_t* packed, int8_t* unpacked, size_t unpacked_count);
 
+void cactus_gaussian_topk_f16(
+    const __fp16* input,
+    __fp16* output,
+    size_t rows,
+    size_t cols,
+    float ppf);
+
+void cactus_altup_predict_f16(
+    const __fp16* coefs,
+    const __fp16* const* streams,
+    __fp16* output,
+    size_t n,
+    size_t seq_len,
+    size_t hidden_dim);
+
+void cactus_altup_correct_f16(
+    const __fp16* coefs,
+    const __fp16* innovation,
+    const __fp16* const* predictions,
+    __fp16* output,
+    size_t n,
+    size_t seq_len,
+    size_t hidden_dim);
+
 void cactus_lstm_cell_f16(
     const __fp16* x_input,
     const __fp16* h_prev,

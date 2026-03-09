@@ -511,14 +511,17 @@ void cactus_sample_f32(const float* logits, uint32_t* output, size_t vocab_size,
                        float temperature, float top_p, size_t top_k, size_t random_seed,
                        const float* bias_values, const uint32_t* bias_indices,
                        size_t bias_count) {
-
-    std::vector<float> filtered_logits(vocab_size);
-
-    for (size_t i = 0; i < vocab_size; ++i) {
-        filtered_logits[i] = logits[i];
+    if (vocab_size == 0) {
+        output[0] = 0;
+        return;
     }
 
-    if (bias_values && bias_indices && bias_count > 0) {
+    const bool has_bias = bias_values && bias_indices && bias_count > 0;
+
+    std::vector<float> filtered_logits(vocab_size);
+    std::memcpy(filtered_logits.data(), logits, vocab_size * sizeof(float));
+
+    if (has_bias) {
         for (size_t i = 0; i < bias_count; ++i) {
             uint32_t idx = bias_indices[i];
             if (idx < vocab_size) {
@@ -528,10 +531,6 @@ void cactus_sample_f32(const float* logits, uint32_t* output, size_t vocab_size,
     }
 
     if (temperature == 0.0f && top_p <= 0.0f && top_k == 0) {
-        if (vocab_size == 0) {
-            output[0] = 0;
-            return;
-        }
         auto it = std::max_element(filtered_logits.begin(), filtered_logits.end());
         output[0] = static_cast<uint32_t>(std::distance(filtered_logits.begin(), it));
         return;
@@ -696,33 +695,17 @@ void cactus_sample_f16(const __fp16* logits, uint32_t* output, size_t vocab_size
                        float temperature, float top_p, size_t top_k, size_t random_seed,
                        const float* bias_values, const uint32_t* bias_indices,
                        size_t bias_count) {
-
-    if (temperature == 0.0f && top_p <= 0.0f && top_k == 0) {
-        if (vocab_size == 0) {
-            output[0] = 0;
-            return;
-        }
-        std::vector<float> biased(vocab_size);
-        for (size_t i = 0; i < vocab_size; ++i) {
-            biased[i] = static_cast<float>(logits[i]);
-        }
-        if (bias_values && bias_indices && bias_count > 0) {
-            for (size_t i = 0; i < bias_count; ++i) {
-                if (bias_indices[i] < vocab_size) {
-                    biased[bias_indices[i]] += bias_values[i];
-                }
-            }
-        }
-        auto it = std::max_element(biased.begin(), biased.end());
-        output[0] = static_cast<uint32_t>(std::distance(biased.begin(), it));
+    if (vocab_size == 0) {
+        output[0] = 0;
         return;
     }
 
-    std::vector<__fp16> filtered_logits(vocab_size);
+    const bool has_bias = bias_values && bias_indices && bias_count > 0;
 
+    std::vector<__fp16> filtered_logits(vocab_size);
     std::memcpy(filtered_logits.data(), logits, vocab_size * sizeof(__fp16));
 
-    if (bias_values && bias_indices && bias_count > 0) {
+    if (has_bias) {
         for (size_t i = 0; i < bias_count; ++i) {
             uint32_t idx = bias_indices[i];
             if (idx < vocab_size) {
@@ -731,20 +714,24 @@ void cactus_sample_f16(const __fp16* logits, uint32_t* output, size_t vocab_size
         }
     }
 
+    if (temperature == 0.0f && top_p <= 0.0f && top_k == 0) {
+        auto it = std::max_element(filtered_logits.begin(), filtered_logits.end());
+        output[0] = static_cast<uint32_t>(std::distance(filtered_logits.begin(), it));
+        return;
+    }
+
     if (temperature > 0) {
         __fp16 inv_temp = static_cast<__fp16>(1.0f / temperature);
         float16x8_t inv_temp_vec = vdupq_n_f16(inv_temp);
         size_t i = 0;
         for (; i + 8 <= vocab_size; i += 8) {
-            float16x8_t logits_vec = vld1q_f16(&logits[i]);
+            float16x8_t logits_vec = vld1q_f16(&filtered_logits[i]);
             float16x8_t scaled = vmulq_f16(logits_vec, inv_temp_vec);
             vst1q_f16(&filtered_logits[i], scaled);
         }
         for (; i < vocab_size; ++i) {
-            filtered_logits[i] = logits[i] * inv_temp;
+            filtered_logits[i] = filtered_logits[i] * inv_temp;
         }
-    } else {
-        std::memcpy(filtered_logits.data(), logits, vocab_size * sizeof(__fp16));
     }
 
     static std::vector<uint32_t> token_history;

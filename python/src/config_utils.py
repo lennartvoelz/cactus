@@ -87,7 +87,9 @@ def detect_model_type(cfg, config, output_dir=None):
     if decoding_model_type == 'tdt' or loss_name == 'tdt':
         return 'parakeet_tdt'
 
-    if 'gemma' in model_type_str:
+    if 'gemma3n' in model_type_str:
+        return 'gemma3n'
+    elif 'gemma' in model_type_str:
         return 'gemma'
     elif 'lfm2' in model_type_str:
         return 'lfm2'
@@ -240,6 +242,78 @@ def extract_moonshine_config(cfg):
     return {
         'partial_rotary_factor': rot_factor,
     }
+
+
+def extract_gemma3n_config(cfg, root_config):
+    """Extract Gemma3n-specific configuration parameters."""
+    altup_num_inputs = int(cfg_get(cfg, 'altup_num_inputs', cfg_get(root_config, 'altup_num_inputs', 4)))
+    laurel_rank = int(cfg_get(cfg, 'laurel_rank', cfg_get(root_config, 'laurel_rank', 64)))
+    hidden_size_per_layer_input = int(cfg_get(cfg, 'hidden_size_per_layer_input',
+        cfg_get(root_config, 'hidden_size_per_layer_input', 256)))
+    rope_local_base_freq = float(cfg_get(cfg, 'rope_local_base_freq',
+        cfg_get(root_config, 'rope_local_base_freq', 10000.0)))
+
+    num_kv_shared_layers = int(cfg_get(cfg, 'num_kv_shared_layers',
+        cfg_get(root_config, 'num_kv_shared_layers', 0)))
+    sliding_window = int(cfg_get(cfg, 'sliding_window',
+        cfg_get(root_config, 'sliding_window', 512)))
+
+    rope_theta = cfg_get(root_config, 'rope_theta', None)
+    if rope_theta is None:
+        rope_theta = cfg_get(cfg, 'rope_theta', 1000000.0)
+
+    attention_types = cfg_get(cfg, 'attention_type_pattern', cfg_get(root_config, 'attention_type_pattern', None))
+    if attention_types is None:
+        attention_types = cfg_get(cfg, 'attention_types', cfg_get(root_config, 'attention_types', None))
+    if attention_types is None:
+        attention_types = cfg_get(cfg, 'layer_types', cfg_get(root_config, 'layer_types', None))
+    layer_types = []
+    if attention_types:
+        num_layers = int(cfg_get(cfg, 'num_hidden_layers', cfg_get(cfg, 'num_layers', 30)))
+        if isinstance(attention_types, (list, tuple)):
+            pattern = list(attention_types)
+        else:
+            pattern = [str(attention_types)]
+        pattern_len = len(pattern)
+        for i in range(num_layers):
+            at = str(pattern[i % pattern_len]).lower()
+            if 'global' in at or 'full' in at:
+                layer_types.append('global')
+            else:
+                layer_types.append('sliding')
+
+    final_logit_softcapping = float(cfg_get(cfg, 'final_logit_softcapping',
+        cfg_get(root_config, 'final_logit_softcapping', 30.0)))
+
+    activation_sparsity = cfg_get(cfg, 'activation_sparsity_pattern',
+        cfg_get(root_config, 'activation_sparsity_pattern', None))
+
+    activation_sparsity_ppf = None
+    if activation_sparsity:
+        import torch, math
+        activation_sparsity_ppf = []
+        for s in activation_sparsity:
+            if s > 0:
+                activation_sparsity_ppf.append(
+                    round(math.sqrt(2) * torch.erfinv(torch.tensor(2.0 * s - 1.0)).item(), 7))
+            else:
+                activation_sparsity_ppf.append(0.0)
+
+    result = {
+        'altup_num_inputs': altup_num_inputs,
+        'laurel_rank': laurel_rank,
+        'hidden_size_per_layer_input': hidden_size_per_layer_input,
+        'num_kv_shared_layers': num_kv_shared_layers,
+        'sliding_window': sliding_window,
+        'rope_local_base_freq': rope_local_base_freq,
+        'rope_theta': float(rope_theta),
+        'final_logit_softcapping': final_logit_softcapping,
+    }
+    if layer_types:
+        result['layer_types'] = layer_types
+    if activation_sparsity_ppf:
+        result['activation_sparsity_ppf'] = activation_sparsity_ppf
+    return result
 
 
 def is_vlm_model(config):
