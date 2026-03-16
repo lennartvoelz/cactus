@@ -922,7 +922,7 @@ void cactus_sample_f16_f32_acc(const __fp16* logits, uint32_t* output, size_t vo
     logit_buf.resize(vocab_size);
     float* fl = logit_buf.data();
 
-    // Fused FP16→FP32 convert + temperature scale + max accumulation
+    // Fused F16 to F32 convert + temperature scale + max accumulation
     float32x4_t max_vec = vdupq_n_f32(-std::numeric_limits<float>::infinity());
     if (temperature > 0.0f) {
         float inv_temp = 1.0f / temperature;
@@ -954,7 +954,6 @@ void cactus_sample_f16_f32_acc(const __fp16* logits, uint32_t* output, size_t vo
         }
     }
 
-    // Apply bias then update max for any biased entries
     if (bias_values && bias_indices && bias_count > 0) {
         for (size_t i = 0; i < bias_count; ++i) {
             uint32_t idx = bias_indices[i];
@@ -989,7 +988,6 @@ void cactus_sample_f16_f32_acc(const __fp16* logits, uint32_t* output, size_t vo
         return;
     }
 
-    // Fused min-p threshold + compaction into active list
     constexpr float min_p = 0.15f;
     float min_p_threshold = max_logit + std::log(min_p);
     active.clear();
@@ -1004,7 +1002,6 @@ void cactus_sample_f16_f32_acc(const __fp16* logits, uint32_t* output, size_t vo
         return;
     }
 
-    // Top-k on the compact list and sort active list
     if (top_k > 0 && top_k < active.size()) {
         std::nth_element(active.begin(), active.begin() + (top_k - 1), active.end(),
             [](const TokenCandidate& a, const TokenCandidate& b) { return a.logit > b.logit; });
@@ -1027,7 +1024,7 @@ void cactus_sample_f16_f32_acc(const __fp16* logits, uint32_t* output, size_t vo
         for (size_t i = 0; i < active.size(); ++i) {
             cum_sum += active[i].logit * inv_total;
             if (cum_sum > top_p && i > 0) {
-                cutoff = i;
+                cutoff = i + 1;
                 break;
             }
         }
