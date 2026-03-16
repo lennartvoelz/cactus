@@ -530,7 +530,7 @@ void cactus_sample_f32(const float* logits, uint32_t* output, size_t vocab_size,
         }
     }
 
-    if (temperature == 0.0f && top_p <= 0.0f && top_k == 0) {
+    if (temperature == 0.0f || top_k == 1) {
         auto it = std::max_element(filtered_logits.begin(), filtered_logits.end());
         output[0] = static_cast<uint32_t>(std::distance(filtered_logits.begin(), it));
         return;
@@ -702,6 +702,12 @@ void cactus_sample_f16(const __fp16* logits, uint32_t* output, size_t vocab_size
 
     const bool has_bias = bias_values && bias_indices && bias_count > 0;
 
+    if ((temperature == 0.0f || top_k == 1) && !has_bias) {
+        auto it = std::max_element(logits, logits + vocab_size);
+        output[0] = static_cast<uint32_t>(std::distance(logits, it));
+        return;
+    }
+
     std::vector<__fp16> filtered_logits(vocab_size);
     std::memcpy(filtered_logits.data(), logits, vocab_size * sizeof(__fp16));
 
@@ -714,7 +720,7 @@ void cactus_sample_f16(const __fp16* logits, uint32_t* output, size_t vocab_size
         }
     }
 
-    if (temperature == 0.0f && top_p <= 0.0f && top_k == 0) {
+    if (temperature == 0.0f || top_k == 1) {
         auto it = std::max_element(filtered_logits.begin(), filtered_logits.end());
         output[0] = static_cast<uint32_t>(std::distance(filtered_logits.begin(), it));
         return;
@@ -898,6 +904,14 @@ void cactus_sample_f16_f32_acc(const __fp16* logits, uint32_t* output, size_t vo
         return;
     }
 
+    const bool has_bias = bias_values && bias_indices && bias_count > 0;
+
+    if ((temperature == 0.0f || top_k == 1) && !has_bias) {
+        auto it = std::max_element(logits, logits + vocab_size);
+        output[0] = static_cast<uint32_t>(std::distance(logits, it));
+        return;
+    }
+
     struct TokenCandidate { float logit; uint32_t index; };
     static thread_local std::vector<float> logit_buf;
     static thread_local std::vector<TokenCandidate> active;
@@ -969,14 +983,9 @@ void cactus_sample_f16_f32_acc(const __fp16* logits, uint32_t* output, size_t vo
         return;
     }
 
-    if (temperature == 0.0f && top_p <= 0.0f && top_k == 0) {
-        for (size_t j = 0; j < vocab_size; ++j) {
-            if (fl[j] == max_logit) {
-                output[0] = static_cast<uint32_t>(j);
-                return;
-            }
-        }
-        output[0] = 0;
+    if (temperature == 0.0f || top_k == 1) {
+        auto it = std::max_element(fl, fl + vocab_size);
+        output[0] = static_cast<uint32_t>(std::distance(fl, it));
         return;
     }
 
