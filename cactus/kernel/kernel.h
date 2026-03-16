@@ -11,7 +11,9 @@ enum class ScalarOpType {
     SUBTRACT,
     MULTIPLY,
     DIVIDE,
+    ABS,
     EXP,
+    POW,
     SQRT,
     COS,
     SIN,
@@ -341,6 +343,8 @@ void cactus_sample_f16_f32_acc(const __fp16* logits, uint32_t* output, size_t vo
 void cactus_concat_f16(const __fp16* input1, const __fp16* input2, __fp16* output,
                        const size_t* shape1, const size_t* shape2, const size_t* output_shape,
                        size_t ndims, int axis);
+void cactus_cat_f16(const __fp16** inputs, __fp16* output, const size_t** input_shapes,
+                      const size_t* output_shape, size_t num_inputs, int axis);
 
 void cactus_int8_to_fp32(const int8_t* src, float* dst, size_t count, float scale = 1.0f);
 void cactus_fp32_to_int8(const float* src, int8_t* dst, size_t count, float scale = 1.0f);

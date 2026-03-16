@@ -10,7 +10,7 @@ size_t CactusGraph::input(const std::vector<size_t>& shape, Precision precision)
 
 size_t CactusGraph::add(size_t input1, size_t input2) {
     const auto& lhs_buffer = get_output_buffer(input1);
-    const auto& rhs_buffer = get_output_buffer(input2);                  
+    const auto& rhs_buffer = get_output_buffer(input2);
     BroadcastInfo broadcast_info = BroadcastInfo::compute(lhs_buffer.shape, rhs_buffer.shape);
     OpParams params{.broadcast_info = broadcast_info};
 
@@ -57,6 +57,73 @@ size_t CactusGraph::divide(size_t input1, size_t input2) {
     return add_node(OpType::DIVIDE, {input1, input2}, broadcast_info.output_shape, params);
 }
 
+size_t CactusGraph::abs(size_t input) {
+    const auto& input_buffer = get_output_buffer(input);
+    OpParams params{.output_precision = input_buffer.precision};
+    return add_node(OpType::ABS, {input}, input_buffer.shape, params);
+}
+
+size_t CactusGraph::pow(size_t input, float exponent) {
+    const auto& input_buffer = get_output_buffer(input);
+    OpParams params{.scalar = exponent, .output_precision = input_buffer.precision};
+    return add_node(OpType::POW, {input}, input_buffer.shape, params);
+}
+
+size_t CactusGraph::view(size_t input, const std::vector<size_t>& new_shape) {
+    const auto& input_buffer = get_output_buffer(input);
+
+    size_t input_elements = 1;
+    for (size_t dim : input_buffer.shape) {
+        input_elements *= dim;
+    }
+
+    size_t new_elements = 1;
+    for (size_t dim : new_shape) {
+        new_elements *= dim;
+    }
+
+    if (input_elements != new_elements) {
+        throw std::runtime_error("View operation requires total number of elements to remain the same");
+    }
+
+    OpParams params{.new_shape = new_shape};
+    return add_node(OpType::VIEW, {input}, new_shape, params);
+}
+
+size_t CactusGraph::flatten(size_t input, int start_dim, int end_dim) {
+    const auto& input_buffer = get_output_buffer(input);
+    const auto& shape = input_buffer.shape;
+    size_t rank = shape.size();
+
+    if (start_dim < 0) start_dim += rank;
+    if (end_dim < 0) end_dim += rank;
+
+    if (start_dim < 0 || static_cast<size_t>(start_dim) >= rank ||
+        end_dim < 0 || static_cast<size_t>(end_dim) >= rank ||
+        start_dim > end_dim) {
+        throw std::runtime_error("Invalid start_dim or end_dim for flatten operation");
+    }
+
+    std::vector<size_t> output_shape;
+
+    for (int i = 0; i < start_dim; ++i) {
+        output_shape.push_back(shape[i]);
+    }
+
+    size_t flattened_dim = 1;
+    for (int i = start_dim; i <= end_dim; ++i) {
+        flattened_dim *= shape[i];
+    }
+    output_shape.push_back(flattened_dim);
+
+    for (size_t i = end_dim + 1; i < rank; ++i) {
+        output_shape.push_back(shape[i]);
+    }
+
+    OpParams params{.new_shape = output_shape};
+    return add_node(OpType::FLATTEN, {input}, output_shape, params);
+}
+
 size_t CactusGraph::matmul(size_t input1, size_t input2, bool pretransposed_rhs, ComputeBackend backend) {
     const auto& lhs_buffer = get_output_buffer(input1);
     const auto& rhs_buffer = get_output_buffer(input2);
@@ -78,7 +145,10 @@ size_t CactusGraph::matmul(size_t input1, size_t input2, bool pretransposed_rhs,
     }
 
     if (K != rhs_K) {
-        std::cout << "Matrix dimensions incompatible for multiplication: " << K << " != " << rhs_K << std::endl;
+        std::cout << "Matrix dimensions incompatible for multiplication: "
+                  << "lhs=[" << M << "," << K << "] rhs=[" << rhs_buffer.shape[0] << "," << rhs_buffer.shape[1] << "]"
+                  << " pretransposed=" << pretransposed_rhs
+                  << " (K=" << K << " != rhs_K=" << rhs_K << ")" << std::endl;
         throw std::invalid_argument("Matrix dimensions incompatible for multiplication");
     }
 
@@ -443,7 +513,7 @@ size_t CactusGraph::attention(size_t query, size_t key, size_t value, float scal
 
 size_t CactusGraph::attention_masked(size_t query, size_t key, size_t value, size_t mask, float scale,
                                      bool is_causal, ComputeBackend backend, bool additive_mask,
-                                     size_t position_offset, size_t window_size) {
+                                     size_t position_offset, size_t window_size, float logit_cap) {
     OpParams params{
         .scale = scale,
         .position_offset = position_offset,
@@ -452,6 +522,7 @@ size_t CactusGraph::attention_masked(size_t query, size_t key, size_t value, siz
         .backend = backend
     };
     params.attention_mask_is_additive = additive_mask;
+    params.logit_cap = logit_cap;
     return add_node(OpType::ATTENTION, {query, key, value, mask}, {}, params);
 }
 
@@ -1110,6 +1181,38 @@ size_t CactusGraph::concat(size_t input1, size_t input2, int axis) {
     return add_node(OpType::CONCAT, {input1, input2}, output_shape, params);
 }
 
+size_t CactusGraph::cat(const std::vector<size_t>& inputs, int axis) {
+    if (inputs.empty()) {
+        throw std::runtime_error("Cat requires at least one input");
+    }
+
+    const auto& first_buffer = get_output_buffer(inputs[0]);
+    std::vector<size_t> output_shape = first_buffer.shape;
+    size_t ndims = output_shape.size();
+
+    if (axis < 0) axis += ndims;
+    if (axis < 0 || static_cast<size_t>(axis) >= ndims) {
+        throw std::runtime_error("Invalid axis for cat operation");
+    }
+
+    for (size_t i = 1; i < inputs.size(); ++i) {
+        const auto& buffer = get_output_buffer(inputs[i]);
+        if (buffer.shape.size() != ndims) {
+            throw std::runtime_error("All inputs to cat must have same number of dimensions");
+        }
+        for (size_t d = 0; d < ndims; ++d) {
+            if (d != static_cast<size_t>(axis) && buffer.shape[d] != output_shape[d]) {
+                throw std::runtime_error("All inputs to cat must have same shape except on cat axis");
+            }
+        }
+        output_shape[axis] += buffer.shape[axis];
+    }
+
+    OpParams params;
+    params.axis = axis;
+    return add_node(OpType::CAT, inputs, output_shape, params);
+}
+
 size_t CactusGraph::scatter_topk(size_t indices, size_t values, size_t num_classes) {
     const auto& indices_buffer = get_output_buffer(indices);
     const auto& values_buffer = get_output_buffer(values);
@@ -1327,8 +1430,7 @@ size_t CactusGraph::embedding(size_t embedding_tensor, size_t indices) {
     output_shape.push_back(emb_buffer.shape[1]);
 
     OpParams params;
-    params.output_precision = (emb_buffer.precision == Precision::INT8) ? Precision::FP16 : emb_buffer.precision;
-
+    params.output_precision = Precision::FP16;
     return add_node(OpType::EMBEDDING, {embedding_tensor, indices}, output_shape, params);
 }
 

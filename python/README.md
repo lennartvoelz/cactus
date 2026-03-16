@@ -8,15 +8,18 @@ keywords: ["Python SDK", "on-device AI", "LLM inference", "Python FFI", "embeddi
 
 Python bindings for Cactus Engine via FFI. Auto-installed when you run `source ./setup`.
 
+> **Model weights:** Pre-converted weights for all supported models at [huggingface.co/Cactus-Compute](https://huggingface.co/Cactus-Compute).
+
 ## Getting Started
 
+<!-- --8<-- [start:install] -->
 ```bash
-# Setup environment
-source ./setup
-
-# Build shared library for Python
+git clone https://github.com/cactus-compute/cactus && cd cactus && source ./setup
 cactus build --python
+```
+<!-- --8<-- [end:install] -->
 
+```bash
 # Download models
 cactus download LiquidAI/LFM2-VL-450M
 cactus download openai/whisper-small
@@ -27,6 +30,7 @@ cactus auth
 
 ## Quick Example
 
+<!-- --8<-- [start:example] -->
 ```python
 from cactus import cactus_init, cactus_complete, cactus_destroy
 import json
@@ -37,6 +41,7 @@ result = json.loads(cactus_complete(model, messages, None, None, None))
 print(result["response"])
 cactus_destroy(model)
 ```
+<!-- --8<-- [end:example] -->
 
 ## API Reference
 
@@ -89,9 +94,71 @@ if result["cloud_handoff"]:
     "total_time_ms": 163.7,
     "prefill_tps": 619.5,
     "decode_tps": 168.4,
+    "ram_usage_mb": 245.7,
     "prefill_tokens": 28,
     "decode_tokens": 12,
     "total_tokens": 40
+}
+```
+
+### Prefill
+
+Pre-processes input text and populates the KV cache without generating output tokens. This reduces latency for subsequent calls to `cactus_complete`.
+
+```python
+result_json = cactus_prefill(
+    handle: int,
+    messages_json: str,              # JSON array of {role, content}
+    options_json: str | None,        # optional inference options
+    tools_json: str | None           # optional tool definitions
+) -> str
+```
+
+```python
+tools = json.dumps([{
+    "type": "function",
+    "function": {
+        "name": "get_weather",
+        "description": "Get weather for a location",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "location": {"type": "string", "description": "City, State, Country"}
+            },
+            "required": ["location"]
+        }
+    }
+}])
+
+messages = json.dumps([
+    {"role": "system", "content": "You are a helpful assistant."},
+    {"role": "user", "content": "What is the weather in Paris?"},
+    {"role": "assistant", "content": "<|tool_call_start|>get_weather(location=\"Paris\")<|tool_call_end|>"},
+    {"role": "tool", "content": "{\"name\": \"get_weather\", \"content\": \"Sunny, 72°F\"}"},
+    {"role": "assistant", "content": "It's sunny and 72°F in Paris!"}
+])
+result = json.loads(cactus_prefill(model, messages, None, tools))
+
+completion_messages = json.dumps([
+    {"role": "system", "content": "You are a helpful assistant."},
+    {"role": "user", "content": "What is the weather in Paris?"},
+    {"role": "assistant", "content": "<|tool_call_start|>get_weather(location=\"Paris\")<|tool_call_end|>"},
+    {"role": "tool", "content": "{\"name\": \"get_weather\", \"content\": \"Sunny, 72°F\"}"},
+    {"role": "assistant", "content": "It's sunny and 72°F in Paris!"},
+    {"role": "user", "content": "What about SF?"}
+])
+result = json.loads(cactus_complete(model, completion_messages, None, tools, None))
+```
+
+**Response format:**
+```json
+{
+    "success": true,
+    "error": null,
+    "prefill_tokens": 25,
+    "prefill_tps": 166.1,
+    "total_time_ms": 150.5,
+    "ram_usage_mb": 245.67
 }
 ```
 
@@ -131,6 +198,17 @@ tokens     = cactus_tokenize(handle: int, text: str) -> list[int]
 result_json = cactus_score_window(handle: int, tokens: list[int], start: int, end: int, context: int) -> str
 ```
 
+### Detect Language
+
+```python
+result_json = cactus_detect_language(
+    handle: int,
+    audio_path: str | None,
+    options_json: str | None,
+    pcm_data: bytes | None
+) -> str
+```
+
 ### VAD
 
 ```python
@@ -161,10 +239,17 @@ cactus_index_compact(index: int)
 cactus_index_destroy(index: int)
 ```
 
+### Logging
+
+```python
+cactus_log_set_level(level: int)  # 0=DEBUG 1=INFO 2=WARN 3=ERROR 4=NONE
+cactus_log_set_callback(callback: Callable[[int, str, str], None] | None)
+```
+
 ### Telemetry
 
 ```python
-cactus_set_telemetry_environment(cache_dir: str)
+cactus_set_telemetry_environment(cache_location: str)
 cactus_set_app_id(app_id: str)
 cactus_telemetry_flush()
 cactus_telemetry_shutdown()
