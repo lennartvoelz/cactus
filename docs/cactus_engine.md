@@ -54,7 +54,8 @@ Initializes a model from disk and prepares it for inference.
 ```c
 cactus_model_t cactus_init(
     const char* model_path,   // Path to the model directory
-    const char* corpus_dir    // Optional path to corpus directory for RAG (can be NULL)
+    const char* corpus_dir,   // Optional path to corpus directory for RAG (can be NULL)
+    bool cache_index          // true = load cached corpus index if available, false = always rebuild
 );
 ```
 
@@ -62,14 +63,14 @@ cactus_model_t cactus_init(
 
 **Example:**
 ```c
-cactus_model_t model = cactus_init("../../weights/qwen3-600m", NULL);
+cactus_model_t model = cactus_init("../../weights/qwen3-600m", NULL, false);
 if (!model) {
     fprintf(stderr, "Failed to initialize model\n");
     return -1;
 }
 
-// with RAG corpus
-cactus_model_t rag_model = cactus_init("../../weights/lfm2-rag", "./documents");
+// with RAG corpus (cache the index for faster subsequent loads)
+cactus_model_t rag_model = cactus_init("../../weights/lfm2-rag", "./documents", true);
 ```
 
 ### `cactus_complete`
@@ -229,6 +230,90 @@ const char* messages = "[{\"role\": \"user\", \"content\": \"Tell me a story\"}]
 char response[8192];
 int result = cactus_complete(model, messages, response, sizeof(response),
                              NULL, NULL, streaming_callback, NULL);
+```
+
+### `cactus_prefill`
+Pre-processes input text and populates the KV cache without generating output tokens. This reduces latency for future calls to `cactus_complete`.
+
+```c
+int cactus_prefill(
+    cactus_model_t model,           // Model handle
+    const char* messages_json,      // JSON array of messages
+    char* response_buffer,         // Buffer for response JSON
+    size_t buffer_size,             // Size of response buffer
+    const char* options_json,       // Optional generation options (can be NULL)
+    const char* tools_json          // Optional tools definition (can be NULL)
+);
+```
+
+**Returns:** Number of bytes written to response_buffer on success, negative value on error.
+
+**Message Format:** Same as `cactus_complete` (see above)
+
+**Options Format:** Same as `cactus_complete` (see above)
+
+**Response Format:**
+```json
+{
+    "success": true,
+    "error": null,
+    "prefill_tokens": 25,
+    "prefill_tps": 166.1,
+    "total_time_ms": 150.5,
+    "ram_usage_mb": 245.67
+}
+```
+
+**Error Response:**
+```json
+{
+    "success": false,
+    "error": "Error message here",
+    "prefill_tokens": 0,
+    "prefill_tps": 0.0,
+    "total_time_ms": 0.0,
+    "ram_usage_mb": 0.0
+}
+```
+
+**Example:**
+```c
+const char* tools = R"([{
+    "type": "function",
+    "function": {
+        "name": "get_weather",
+        "description": "Get weather for a location",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "location": {"type": "string", "description": "City, State, Country"}
+            },
+            "required": ["location"]
+        }
+    }
+}])";
+
+const char* base_messages = R"([
+    { "role": "system", "content": "You are a helpful assistant." },
+    { "role": "user", "content": "What is the weather in Paris?" },
+    { "role": "assistant", "content": "<|tool_call_start|>get_weather(location=\"Paris\")<|tool_call_end|>" },
+    { "role": "tool", "content": "{\"name\": \"get_weather\", \"content\": \"Sunny, 72°F\"}" },
+    { "role": "assistant", "content": "It's sunny and 72°F in Paris!" }
+])";
+
+char prefill_response[1024];
+cactus_prefill(model, base_messages, prefill_response, sizeof(prefill_response), NULL, tools);
+
+const char* completion_messages = R"([
+    { "role": "system", "content": "You are a helpful assistant." },
+    { "role": "user", "content": "What is the weather in Paris?" },
+    { "role": "assistant", "content": "<|tool_call_start|>get_weather(location=\"Paris\")<|tool_call_end|>" },
+    { "role": "tool", "content": "{\"name\": \"get_weather\", \"content\": \"Sunny, 72°F\"}" },
+    { "role": "assistant", "content": "It's sunny and 72°F in Paris!" }
+    { "role": "user", "content": "What about SF?" }
+])";
+char response[4096];
+cactus_complete(model, completion_messages, response, sizeof(response), NULL, tools, NULL, NULL);
 ```
 
 ### `cactus_tokenize`

@@ -9,7 +9,13 @@
 [![Reddit][reddit-shield]][reddit-url]
 [![Blog][blog-shield]][blog-url]
 
-A hybrid low-latency energy-efficient AI engine for mobile devices & wearables.
+A low-latency AI engine for mobile devices & wearables. Main features:
+
+- **Fast:** fastest inference on ARM CPU
+- **Low RAM:** zero-copy memory mapping ensures 10x lower RAM use than other engines
+- **Multimodal:** one SDK for speech, vision, and language models
+- **Cloud fallback:** automatically route requests to cloud models if needed
+- **Energy-efficient:** NPU-accelerated prefill
 
 ```
 ┌─────────────────┐
@@ -25,7 +31,7 @@ A hybrid low-latency energy-efficient AI engine for mobile devices & wearables.
 └─────────────────┘     Custom attention, KV-cache quant, chunked prefill
 ```
 
-## Quick Demo 
+## Quick Demo (Mac)
 
 - Step 1: `brew install cactus-compute/cactus/cactus`
 - Step 2: `cactus transcribe` or `cactus run` 
@@ -120,7 +126,9 @@ graph.hard_reset();
 | [Rust SDK](/rust/) | Rust | Mac, Linux |
 | [React Native](https://github.com/cactus-compute/cactus-react-native) | JavaScript | iOS, Android |
 
-## Benchmarks
+> **Model weights:** Pre-converted weights for all supported models at [huggingface.co/Cactus-Compute](https://huggingface.co/Cactus-Compute).
+
+## Benchmarks (CPU-only, no GPU)
 
 - All weights INT4 quantised
 - LFM: 1k-prefill / 100-decode, values are prefill tps / decode tps
