@@ -13,6 +13,7 @@ dependencies = [
 [project.optional-dependencies]
 vlm = ["Pillow", "num2words", "torchvision"]
 lora = ["peft"]
+serve = ["fastapi", "uvicorn"]
 
 [project.scripts]
 cactus = "src.cli:main"
