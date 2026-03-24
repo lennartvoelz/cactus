@@ -1,5 +1,6 @@
 """Cactus Python FFI bindings."""
 import ctypes
+import json
 import platform
 from pathlib import Path
 
@@ -25,6 +26,9 @@ _lib.cactus_set_telemetry_environment(b"python", None, None)
 
 _lib.cactus_init.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_bool]
 _lib.cactus_init.restype = ctypes.c_void_p
+
+_lib.cactus_init_with_context.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_bool, ctypes.c_size_t]
+_lib.cactus_init_with_context.restype = ctypes.c_void_p
 
 _lib.cactus_complete.argtypes = [
     ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_size_t,
@@ -235,9 +239,18 @@ def cactus_telemetry_shutdown():
     _lib.cactus_telemetry_shutdown()
 
 
-def cactus_init(model_path, corpus_dir, cache_index):
-    """Initializes a model from the given path. Returns handle."""
-    handle = _lib.cactus_init(_enc(model_path), _enc(corpus_dir), cache_index)
+def cactus_init(model_path, corpus_dir=None, cache_index=False, context_length=0):
+    """Initializes a model from the given path. Returns handle.
+
+    Args:
+        context_length: KV cache size in tokens (0 = default 512).
+    """
+    if context_length > 0:
+        handle = _lib.cactus_init_with_context(
+            _enc(model_path), _enc(corpus_dir), cache_index, context_length
+        )
+    else:
+        handle = _lib.cactus_init(_enc(model_path), _enc(corpus_dir), cache_index)
     if not handle:
         raise RuntimeError(_err("Failed to initialize model"))
     return handle
@@ -598,3 +611,108 @@ def cactus_log_set_callback(callback):
 
     _log_callback_ref = LogCallback(_bridge)
     _lib.cactus_log_set_callback(_log_callback_ref, None)
+
+
+class CactusModel:
+    """Context manager wrapper for Cactus model handle.
+    
+    Usage:
+        with CactusModel("/path/to/model") as model:
+            result = model.complete('[{"role": "user", "content": "Hello"}]')
+    """
+    
+    def __init__(self, model_path, corpus_dir=None, cache_index=False, context_length=0):
+        self._handle = cactus_init(model_path, corpus_dir, cache_index, context_length)
+    
+    def __enter__(self):
+        return self
+    
+    def __exit__(self):
+        cactus_destroy(self._handle)
+        return False
+    
+    def complete(self, messages, options=None, tools=None):
+        """Run chat completion.
+        
+        Args:
+            messages: JSON string of message array or list of dicts
+            options: Optional dict with temperature, max_tokens, etc.
+            tools: Optional tools JSON string
+        
+        Returns:
+            JSON string response from Cactus
+        """
+        if isinstance(messages, list):
+            messages = json.dumps(messages)
+        
+        options_json = json.dumps(options) if options else "{}"
+        tools_json = json.dumps(tools) if tools else None
+        
+        return cactus_complete(
+            self._handle,
+            messages,
+            options_json,
+            tools_json,
+            None
+        )
+    
+    def complete_streaming(self, messages, token_queue, options=None, tools=None):
+        """Run chat completion with per-token streaming via a queue.
+
+        Blocks until generation is complete. Each token is pushed onto
+        token_queue as it's generated; runs in a background thread.
+
+        Args:
+            messages: JSON string of message array or list of dicts
+            token_queue: queue.Queue to receive _TokenChunk, _StreamDone, _StreamError
+            options: Optional dict with temperature, max_tokens, etc.
+            tools: Optional tools JSON string
+        """
+        from .server import _TokenChunk, _StreamDone, _StreamError
+
+        if isinstance(messages, list):
+            messages = json.dumps(messages)
+
+        options_json = json.dumps(options) if options else "{}"
+        tools_json = json.dumps(tools) if tools else None
+
+        def on_token(text):
+            token_queue.put(_TokenChunk(text))
+
+        try:
+            result = cactus_complete(
+                self._handle, messages, options_json, tools_json, on_token
+            )
+            token_queue.put(_StreamDone(result))
+        except Exception as e:
+            token_queue.put(_StreamError(e))
+
+    def reset(self):
+        """Clear the KV cache."""
+        cactus_reset(self._handle)
+    
+    def stop(self):
+        """Signal the current generation to stop."""
+        cactus_stop(self._handle)
+    
+    def embed(self, text):
+        """Generate text embedding."""
+        return cactus_embed(self._handle, text, normalize=True)
+    
+    def image_embed(self, image_path):
+        """Generate image embedding."""
+        return cactus_image_embed(self._handle, image_path)
+    
+    def audio_embed(self, audio_path):
+        """Generate audio embedding."""
+        return cactus_audio_embed(self._handle, audio_path)
+    
+    def transcribe(self, audio_path, prompt=None, options=None):
+        """Transcribe audio file to text."""
+        options_dict = {"prompt": prompt} if prompt else {}
+        if options:
+            options_dict.update(options)
+        options_json = json.dumps(options_dict) if options_dict else "{}"
+        return cactus_transcribe(
+            self._handle, audio_path, prompt, options_json, None, None
+        )
