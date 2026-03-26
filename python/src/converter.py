@@ -866,6 +866,44 @@ def convert_hf_model_weights(
                                 found = True
                                 break
 
+                            # Qwen3.5-MoE packed expert weights; split into per-expert files
+                            if model_type_str.startswith('qwen3_5') and pattern == 'mlp.experts.gate_up_proj':
+                                if tensor.ndim != 3:
+                                    raise ValueError(f"Invalid qwen3_5 mlp.experts.gate_up_proj shape: {tensor.shape}, expected 3D [num_experts, 2*intermediate, hidden]")
+                                num_experts = tensor.shape[0]
+                                fused_dim = tensor.shape[1]
+                                if fused_dim % 2 != 0:
+                                    raise ValueError(f"Invalid gate_up_proj fused dim {fused_dim}, expected even")
+                                intermediate = fused_dim // 2
+                                for expert_idx in range(num_experts):
+                                    gate_weight = tensor[expert_idx, :intermediate, :]
+                                    up_weight = tensor[expert_idx, intermediate:, :]
+                                    save_tensor_with_header(
+                                        gate_weight, output_dir / f'layer_{i}_moe_expert_{expert_idx}_w1.weights',
+                                        tensor_precision, transpose=should_transpose,
+                                        stats_tracker=quantization_stats, args=args, model_type=detected_model_type)
+                                    save_tensor_with_header(
+                                        up_weight, output_dir / f'layer_{i}_moe_expert_{expert_idx}_w3.weights',
+                                        tensor_precision, transpose=should_transpose,
+                                        stats_tracker=quantization_stats, args=args, model_type=detected_model_type)
+                                saved_tensor_full_names.add(full_name)
+                                found = True
+                                break
+
+                            if model_type_str.startswith('qwen3_5') and pattern == 'mlp.experts.down_proj':
+                                if tensor.ndim != 3:
+                                    raise ValueError(f"Invalid qwen3_5 mlp.experts.down_proj shape: {tensor.shape}, expected 3D [num_experts, hidden, intermediate]")
+                                num_experts = tensor.shape[0]
+                                for expert_idx in range(num_experts):
+                                    down_weight = tensor[expert_idx]
+                                    save_tensor_with_header(
+                                        down_weight, output_dir / f'layer_{i}_moe_expert_{expert_idx}_w2.weights',
+                                        tensor_precision, transpose=should_transpose,
+                                        stats_tracker=quantization_stats, args=args, model_type=detected_model_type)
+                                saved_tensor_full_names.add(full_name)
+                                found = True
+                                break
+
                             if pattern.startswith('attn.Wqkv.') and model_type_str == 'nomic_bert':
                                 if tensor.ndim == 1:
                                     tensor = tensor.reshape(3, -1)
