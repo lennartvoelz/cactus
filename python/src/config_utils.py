@@ -148,6 +148,9 @@ def extract_base_config(cfg, config):
         'num_top_experts': num_experts_per_tok,
         'num_experts_per_tok': num_experts_per_tok,
         'moe_every_n_layers': cfg_get(cfg, 'moe_every_n_layers', 0),
+        'moe_intermediate_dim': int(cfg_get(cfg, 'moe_intermediate_size', 0) or 0),
+        'shared_expert_intermediate_size': int(cfg_get(cfg, 'shared_expert_intermediate_size', 0) or 0),
+        'norm_topk_prob': bool(cfg_get(cfg, 'norm_topk_prob', False)),
     }
     if partial_rotary_factor is not None:
         base['partial_rotary_factor'] = float(partial_rotary_factor)
