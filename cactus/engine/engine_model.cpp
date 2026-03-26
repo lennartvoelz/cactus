@@ -478,6 +478,7 @@ bool Config::from_json(const std::string& config_path) {
         else if (key == "norm_topk_prob") norm_topk_prob = (value == "true" || value == "1");
         else if (key == "use_expert_bias") use_expert_bias = (value == "true" || value == "1");
         else if (key == "routed_scaling_factor") routed_scaling_factor = std::stof(value);
+        else if (key == "shared_expert_intermediate_size") shared_expert_intermediate_size = static_cast<uint32_t>(std::stoul(value));
         else if (key == "tie_word_embeddings") tie_word_embeddings = (value == "true" || value == "1");
         else if (key == "vision_hidden_dim" || key == "vision_hidden_size") vision_hidden_dim = static_cast<uint32_t>(std::stoul(value));
         else if (key == "vision_num_layers") vision_num_layers = static_cast<uint32_t>(std::stoul(value));
@@ -731,6 +732,9 @@ std::unique_ptr<Model> create_model(const std::string& model_folder) {
         case Config::ModelType::QWEN:
             return std::make_unique<QwenModel>(config);
         case Config::ModelType::QWEN3P5:
+            if (config.num_experts > 0 && config.moe_intermediate_dim > 0 && config.num_experts_per_tok > 0) {
+                return std::make_unique<Qwen3p5MoEModel>(config);
+            }
             return std::make_unique<Qwen3p5Model>(config);
         case Config::ModelType::GEMMA:
             return std::make_unique<GemmaModel>(config);

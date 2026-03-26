@@ -62,6 +62,7 @@ struct Config {
     bool norm_topk_prob = false;
     bool use_expert_bias = false;
     float routed_scaling_factor = 1.0f;
+    uint32_t shared_expert_intermediate_size = 0;
     bool tie_word_embeddings = true;
 
     uint32_t vision_hidden_dim = 0;
