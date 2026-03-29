@@ -2182,6 +2182,10 @@ def create_parser():
                                 help='Weights package preference used by conversion download step: auto, apple, or standard')
     convert_parser.add_argument('--lora', help='Path to LoRA adapter (local path or HuggingFace ID) to merge before conversion')
 
+    serve_parser = subparsers.add_parser('serve', help='Start local API server (OpenAI compatible)')
+    serve_parser.add_argument('model_path', help='Path to converted weights directory (e.g. weights/gemma-3-270m)')
+    serve_parser.add_argument('--config', default=None, help='Path to config.yml for server settings')
+
     return parser
 
 
@@ -2196,6 +2200,56 @@ def preprocess_eval_args(parser, argv):
         parser.error(f"unrecognized arguments: {' '.join(unknown)}")
 
     return args
+
+
+def _read_config_field(weights_path, field):
+    """Read a field from a model's config.txt."""
+    config_file = weights_path / "config.txt"
+    if not config_file.exists():
+        return ""
+    for line in config_file.read_text().splitlines():
+        if line.startswith(f"{field}="):
+            return line.split("=", 1)[1].strip()
+    return ""
+
+
+def cmd_serve(args):
+    """Start the local API server."""
+    from .config import load_config
+    from .server import run_server
+    from .cactus import CactusModel
+
+    weights_path = Path(args.model_path)
+    if not weights_path.exists():
+        print(f"Weights not found at {weights_path}")
+        return 1
+
+    config_file = weights_path / "config.txt"
+    if not config_file.exists():
+        print(f"Not a valid weights directory (missing config.txt): {weights_path}")
+        return 1
+
+    config = load_config(args.config)
+
+    host = config.host
+    port = config.port
+    ctx = config.context_length
+    model_max_ctx = int(_read_config_field(weights_path, "context_length") or 0)
+    if model_max_ctx > 0:
+        ctx = min(ctx, model_max_ctx)
+
+    model_name = weights_path.name
+
+    print(f"Loading model from {weights_path} (context_length={ctx})...")
+    try:
+        model = CactusModel(str(weights_path), context_length=ctx)
+    except Exception as e:
+        print(f"Failed to load model: {e}")
+        return 1
+
+    print(f"Starting server on {host}:{port}")
+    run_server(model_name, model, host, port, ctx)
+    return 0
 
 
 def main():
@@ -2225,6 +2279,8 @@ def main():
         sys.exit(cmd_list(args))
     elif args.command == 'convert':
         sys.exit(cmd_convert(args))
+    elif args.command == 'serve':
+        sys.exit(cmd_serve(args))
     else:
         parser.print_help()
         sys.exit(1)
