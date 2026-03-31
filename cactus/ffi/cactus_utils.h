@@ -1090,6 +1090,10 @@ inline void parse_function_calls_from_response(const std::string& response_text,
 
 inline void strip_tag_blocks(std::string& text, std::string& extracted,
                              const std::string& open_tag, const std::string& close_tag) {
+    if (text.find(open_tag) == std::string::npos || text.find(close_tag) == std::string::npos) {
+        return;
+    }
+
     std::string result;
     size_t pos = 0;
 
@@ -1159,9 +1163,12 @@ inline void strip_thinking_block(const std::string& input, std::string& thinking
             s.clear();
     };
 
-    if (content.find("<|channel>") != std::string::npos || content.find("<channel|>") != std::string::npos) {
-        strip_tag_blocks(content, thinking, "<|channel>", "<channel|>");
-    } else if (content.find("<think>") != std::string::npos || content.find("</think>") != std::string::npos) {
+    std::string trimmed = content;
+    trim(trimmed);
+
+    if (trimmed.find("<|channel|>") == 0 || trimmed.find("<channel|>") == 0) {
+        strip_tag_blocks(content, thinking, "<|channel|>", "<channel|>");
+    } else if (trimmed.find("<think>") == 0) {
         strip_tag_blocks(content, thinking, "<think>", "</think>");
     } else {
         return;
