@@ -510,7 +510,9 @@ void cactus_softmax_f16(
 void cactus_sample_f32(const float* logits, uint32_t* output, size_t vocab_size,
                        float temperature, float top_p, size_t top_k, size_t random_seed,
                        const float* bias_values, const uint32_t* bias_indices,
-                       size_t bias_count) {
+                       size_t bias_count,
+                       const uint32_t* rep_penalty_tokens, size_t rep_penalty_count,
+                       float rep_penalty) {
     if (vocab_size == 0) {
         output[0] = 0;
         return;
@@ -526,6 +528,20 @@ void cactus_sample_f32(const float* logits, uint32_t* output, size_t vocab_size,
             uint32_t idx = bias_indices[i];
             if (idx < vocab_size) {
                 filtered_logits[idx] += bias_values[i];
+            }
+        }
+    }
+
+    // Apply repetition penalty: divide positive logits, multiply negative logits
+    if (rep_penalty_tokens && rep_penalty_count > 0 && rep_penalty != 1.0f) {
+        for (size_t i = 0; i < rep_penalty_count; ++i) {
+            uint32_t idx = rep_penalty_tokens[i];
+            if (idx < vocab_size) {
+                if (filtered_logits[idx] > 0.0f) {
+                    filtered_logits[idx] /= rep_penalty;
+                } else {
+                    filtered_logits[idx] *= rep_penalty;
+                }
             }
         }
     }
@@ -646,7 +662,7 @@ void cactus_sample_f32(const float* logits, uint32_t* output, size_t vocab_size,
         output[0] = 0;
         return;
     }
-    
+
     std::vector<float> probs(vocab_size);
     float sum = 0.0f;
     for (size_t i = 0; i < vocab_size; ++i) {
@@ -657,21 +673,21 @@ void cactus_sample_f32(const float* logits, uint32_t* output, size_t vocab_size,
             sum += probs[i];
         }
     }
-    
+
     if (sum == 0.0f) {
         output[0] = 0;
         return;
     }
-    
+
     for (size_t i = 0; i < vocab_size; ++i) {
         probs[i] /= sum;
     }
-    
+
     uint32_t actual_seed = (random_seed == 0) ? std::random_device{}() : random_seed;
     std::mt19937 gen(actual_seed);
     std::uniform_real_distribution<float> dist(0.0f, 1.0f);
     float sample = dist(gen);
-    
+
     float cumulative = 0.0f;
     for (size_t i = 0; i < vocab_size; ++i) {
         cumulative += probs[i];
@@ -680,7 +696,7 @@ void cactus_sample_f32(const float* logits, uint32_t* output, size_t vocab_size,
             return;
         }
     }
-    
+
     for (size_t i = vocab_size; i > 0; --i) {
         if (probs[i-1] > 0.0f) {
             output[0] = static_cast<uint32_t>(i-1);

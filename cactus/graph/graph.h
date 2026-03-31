@@ -349,6 +349,9 @@ struct OpParams {
     std::vector<float> bias_values;
     std::vector<uint32_t> bias_indices;
 
+    std::vector<uint32_t> rep_penalty_tokens;
+    float rep_penalty = 1.0f;
+
     const int8_t* cached_keys_int8 = nullptr;
     const int8_t* cached_values_int8 = nullptr;
     const float* cached_k_scales = nullptr;
@@ -575,7 +578,9 @@ public:
     size_t gaussian_topk(size_t input, float ppf);
 
     size_t sample(size_t logits, float temperature = 0.6f, float top_p = 0.95f, size_t top_k = 20,
-                  const std::unordered_map<uint32_t, float>& logit_bias = {});
+                  const std::unordered_map<uint32_t, float>& logit_bias = {},
+                  const std::vector<uint32_t>& rep_penalty_tokens = {},
+                  float rep_penalty = 1.0f);
     
     size_t concat(size_t input1, size_t input2, int axis = 0);
     size_t cat(const std::vector<size_t>& inputs, int axis);

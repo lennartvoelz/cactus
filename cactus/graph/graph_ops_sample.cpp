@@ -25,16 +25,27 @@ void compute_sample_node(GraphNode& node, const std::vector<std::unique_ptr<Grap
     size_t vocab_size = logits_buffer.shape[1];
     size_t last_token_offset = (seq_len - 1) * vocab_size;
 
+    const uint32_t* rep_tokens = node.params.rep_penalty_tokens.empty() ? nullptr : node.params.rep_penalty_tokens.data();
+    size_t rep_count = node.params.rep_penalty_tokens.size();
+    float rep_penalty = node.params.rep_penalty;
+
     if (logits_buffer.precision == Precision::FP16) {
         const __fp16* logits_fp16 = logits_buffer.data_as<__fp16>();
-        cactus_sample_f16(logits_fp16 + last_token_offset, node.output_buffer.data_as<uint32_t>(),
+        // Upcast to FP32 for numerically stable sampling
+        std::vector<float> logits_fp32(vocab_size);
+        for (size_t i = 0; i < vocab_size; ++i) {
+            logits_fp32[i] = static_cast<float>(logits_fp16[last_token_offset + i]);
+        }
+        cactus_sample_f32(logits_fp32.data(), node.output_buffer.data_as<uint32_t>(),
                          vocab_size, temperature, top_p, top_k, random_seed,
-                         bias_values, bias_indices, bias_count);
+                         bias_values, bias_indices, bias_count,
+                         rep_tokens, rep_count, rep_penalty);
     } else {
         const float* logits_fp32 = logits_buffer.data_as<float>();
         cactus_sample_f32(logits_fp32 + last_token_offset, node.output_buffer.data_as<uint32_t>(),
                          vocab_size, temperature, top_p, top_k, random_seed,
-                         bias_values, bias_indices, bias_count);
+                         bias_values, bias_indices, bias_count,
+                         rep_tokens, rep_count, rep_penalty);
     }
 }
 

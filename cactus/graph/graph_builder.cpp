@@ -1248,7 +1248,9 @@ size_t CactusGraph::scatter_topk(size_t indices, size_t values, size_t num_class
 }
 
 size_t CactusGraph::sample(size_t logits, float temperature, float top_p, size_t top_k,
-                           const std::unordered_map<uint32_t, float>& logit_bias) {
+                           const std::unordered_map<uint32_t, float>& logit_bias,
+                           const std::vector<uint32_t>& rep_penalty_tokens,
+                           float rep_penalty) {
     const auto& logits_buffer = get_output_buffer(logits);
 
     if (logits_buffer.shape.empty()) {
@@ -1269,6 +1271,11 @@ size_t CactusGraph::sample(size_t logits, float temperature, float top_p, size_t
             params.bias_indices.push_back(idx);
             params.bias_values.push_back(val);
         }
+    }
+
+    if (!rep_penalty_tokens.empty() && rep_penalty != 1.0f) {
+        params.rep_penalty_tokens = rep_penalty_tokens;
+        params.rep_penalty = rep_penalty;
     }
 
     std::vector<size_t> output_shape = {1};
