@@ -433,8 +433,7 @@ int cactus_complete(
         auto* handle = static_cast<CactusModelHandle*>(model);
         handle->should_stop = false;
         auto* tokenizer = handle->model->get_tokenizer();
-        auto prompt = prepare_prompt(handle, messages_json, options_json, tools_json, true, true);
-
+        auto prompt = prepare_prompt(handle, messages_json, options_json, tools_json, true, true); 
         CACTUS_LOG_DEBUG("complete", "Prompt tokens: " << prompt.tokens.size()
             << ", max_tokens: " << prompt.options.max_tokens);
 
@@ -510,6 +509,12 @@ int cactus_complete(
 
             for (size_t i = 1; i < prompt.options.max_tokens; i++) {
                 if (handle->should_stop) break;
+
+                {
+                    size_t window = std::min(generated_tokens.size(), (size_t)128);
+                    std::vector<uint32_t> recent(generated_tokens.end() - window, generated_tokens.end());
+                    handle->model->set_repetition_context(recent, 1.1f);
+                }
 
                 float token_entropy = 0.0f;
                 next_token = decode(handle->model, {next_token}, prompt.options, &token_entropy);
