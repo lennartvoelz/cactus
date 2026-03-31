@@ -653,7 +653,19 @@ public:
         return !vocab_bias_.empty();
     }
 
+    void set_repetition_context(const std::vector<uint32_t>& recent_tokens, float penalty) {
+        rep_penalty_tokens_ = recent_tokens;
+        rep_penalty_ = penalty;
+    }
+    void clear_repetition_context() {
+        rep_penalty_tokens_.clear();
+        rep_penalty_ = 1.0f;
+    }
+
 protected:
+    std::vector<uint32_t> rep_penalty_tokens_;
+    float rep_penalty_ = 1.0f;
+
     size_t sample_token(CactusGraph* gb, size_t logits_node_id, float temperature, float top_p, size_t top_k,
                         const std::unordered_map<uint32_t, float>* extra_bias = nullptr) const;
 
