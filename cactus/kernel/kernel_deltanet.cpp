@@ -10,7 +10,10 @@
 namespace {
 
 inline float safe_exp_gate(float gate_log) {
-    const float clamped = std::max(-20.0f, std::min(6.0f, gate_log));
+    // Only clamp upper bound to prevent FP32 exp overflow (exp(89) = Inf).
+    // No lower bound clamp: exp(-91) ≈ 1e-40 is a valid FP32 subnormal,
+    // and underflow to 0 is the correct behavior for "fully decay state".
+    const float clamped = std::min(80.0f, gate_log);
     return std::exp(clamped);
 }
 
